@@ -1,0 +1,48 @@
+= Hello FrameGraph
+:revnumber: 2.0
+:revdate: 2024/07/28
+:keywords: rendering, pipeline, framegraph, documentation
+
+
+By default, JME has uses a simple forward renderer, and while it can usually get by, it is not satisfactory for high-quality rendering because it is often too slow. FrameGraphs were introduced to give users chance to customize the rendering pipeline to best meet their application's needs with a practical modular interface.
+
+
+== What exactly is a FrameGraph?
+
+A FrameGraph is a customizable rendering pipeline consisting of a series of modular passes. Passes have the ability to share resources (such as rendering results) with each other through the FrameGraph's special resource manager. The resource manager attempts to minimize the creation of expensive resources (such as textures) by reallocating them whenever the schedule allows.
+
+== Creating and Using a FrameGraph
+
+The first step to using a FrameGraph to render your application is to create one. You can either load one from a `.j3g` binary file, or create one yourself from scratch or from a factory method. For this tutorial, we will focus on loading from a binary.
+
+----
+FrameGraph fg = assetManager.loadFrameGraph("Common/FrameGraphs/Deferred.j3g");
+----
+
+Now that the FrameGraph has been created, it must be added to a ViewPort it will render.
+
+----
+viewPort.setPipeline(fg);
+----
+
+And that's it! That ViewPort's rendering will now totally be handled by the FrameGraph.
+
+== Customizing a FrameGraph
+
+Some FrameGraphs have special settings you can set to change how the FrameGraph renders the scene. The FrameGraph we picked out for this tutorial (`Common/FrameGraphs/Deferred.j3g`), has three such settings integrated. The base method for configuring a setting is `setSetting`.
+
+----
+fg.setSetting("TileInfo", new TiledRenderGrid());
+----
+
+The method registers the object (TiledRenderGrid) under "TileInfo" in a map. FrameGraph internals will use the object found at the "TileInfo" key in certain rendering processes. In this case, the "TileInfo" setting controls how tiles are partitioned on the screen for a tiled lighting technique.
+
+A common helper method for configuring a setting is `enableFeature`, which, due to how the FrameGraph works, stores 0 for true and -1 for false. This is commonly used for enabling or disabling whole chunks of passes.
+
+----
+fg.enableFeature("UseLightTextures", true);
+----
+
+In this case, the `enableFeature` method is used to enable storing of lighting information in textures.
+
+
