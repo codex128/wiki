@@ -1,0 +1,104 @@
+= Attributes and Junctions
+:revnumber: 0.0
+:revdate: 2024/07/29
+:keywords: rendering, pipeline, framegraph, documentation
+
+Attributes and Junctions are special passes that allow game logic to control certain aspects of the FrameGraph. There isn't anything magical about these passes, they are just so useful that an entire tutorial is dedicated to explaining how to use them.
+
+== Settings Map
+
+The settings map is a HashMap in the FrameGraph that stores objects by strings. As we'll see later, the settings map is the primary way to communicate between FrameGraph internals and game logic.
+
+== GraphSource and GraphTarget
+
+GraphSource and GraphTarget are the two interfaces used to bridge the gap between the FrameGraph and game logic. GraphSource goes from game logic to FrameGraph, and GraphTarget goes the other direction. Both Attribute and Junction make use of GraphSources, and Attribute uses GraphTargets
+
+== Attribute
+
+An Attribute is a dual-purpose pass that broadcasts its input resource to a set of listeners (called _GraphTargets_) or produces an object recieved from a _GraphSource_ as output. It acts as a sort of information hub between game logic and graph internals.
+
+----
+Attribute myAttr = fg.add(new Attribute<>());
+----
+
+Any pass can recieve the output of an Attribute, which is sourced from a GraphSource.
+
+----
+somePass.makeInput(myAttr, Attribute.OUTPUT, "SomeInput");
+----
+
+And the Attribute can recieve input just like any other pass, which it then broadcasts to its registered GraphTargets.
+
+----
+myAttr.makeInput(somePass, "SomeOutput", Attribute.INPUT);
+----
+
+== Junction
+
+The Junction pass is more complicated than Attribute, but no less important. Junction accepts a whole bunch of inputs and chooses one to produce as its only output. It could also choose none of them to be the output, which would put the output resource in an https://brokenlink/[undefined state].
+
+As an example of how powerful this feature is, consider this section of a FrameGraph:
+
+----
+GeometryPass geometry = fg.add(new GeometryPass());
+DownsamplingPass downsample = fg.add(new DownsamplingPass());
+OutputPass out = fg.add(new OutputPass());
+
+downsample.makeInput(geometry, "Color", "Input");
+out.makeInput(downsample, "Output", "Color");
+----
+
+A Junction can be added to make the downsampling pass optional.
+
+----
+GeometryPass geometry = fg.add(new GeometryPass());
+DownsamplingPass downsample = fg.add(new DownsamplingPass());
+Junction junct = fg.add(new Junction(2, 1));
+OutputPass out = fg.add(new OutputPass());
+
+downsample.makeInput(geometry, "Color", "Input");
+junct.makeInput(geometry, "Color", Junction.getInput(0));
+junct.makeInput(downsample, "Output", Junction.getInput(1));
+out.makeInput(junct, Junction.getOutput(), "Color");
+----
+
+So if the Junction chooses input[0] to be the output, the OutputPass will be working with the color texture from the GeometryPass. And if the Junction chooses input[1] as the output, the output from the downsampling pass will be used.
+
+The Junction sources the "chooser" index from, you guessed it, a GraphSource. So essentially, you can control what passes are ultimately used from your game logic.
+
+----
+junct.setIndexSource(new MyGraphSource());
+----
+
+=== A Quick Note about Culling
+
+You might worry that by using Junctions, you will perform operations that will ultimately be unnecessary. Fortunately, the FrameGraph has a special culling algorithm that culls passes whose outputs go unused, so there is no need to worry about this. If you never want one of your custom RenderPass to be culled, you can override `isUsed` in your pass to always return true.
+
+----
+@Override
+public boolean isUsed() {
+    return true;
+}
+----
+
+== Exercise
+
+* Add an Attribute that gives the texture produced by the GeometryPass to the game logic.
+
+* Control the Junction added above with a GraphSource.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

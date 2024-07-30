@@ -1,0 +1,352 @@
+= Hello RenderPass
+:revnumber: 0.0
+:revdate: 2024/07/29
+:keywords: rendering, pipeline, framegraph, documentation
+
+You can go a long way with only the render passes provided by JMonkeyEngine, but eventually you will want to write your own. Maybe you want to add a cool visual effect or something. Whatever it is, knowing how to write custom render passes is important for using FrameGraphs seriously.
+
+== What Happened to SceneProcessors?
+
+If you fiddled around with FrameGraphs at all, you may have noticed that SceneProcessors (and FilterPostProcessor) don't work when using a FrameGraph. This is because the FrameGraph replaces SceneProcessors with much more flexible RenderPasses. If you want to process the scene when using a FrameGraph, you use a RenderPass not a SceneProcessor.
+
+== Extending RenderPass
+
+For this tutorial, we will be constructing a RenderPass that downsamples an input texture to an output texture. Downsampling is the process of rendering a high resolution texture to a low resolution texture. In our case, we will render to a texture that is 1/4 the size of the input texture.
+
+The first step is to create a class that extends RenderPass.
+
+----
+public class DownsamplingPass extends RenderPass {
+    
+    @Override
+    protected void initialize(FrameGraph frameGraph) {}
+    
+    @Override
+    protected void prepare(FGRenderContext context) {}
+    
+    @Override
+    protected void execute(FGRenderContext context) {}
+    
+    @Override
+    protected void reset(FGRenderContext context) {}
+    
+    @Override
+    protected void cleanup(FrameGraph frameGraph) {}
+    
+}
+----
+
+* **initialize** is called when the RenderPass is added to a FrameGraph. Obviously, this is where you set up different pass elements, including tickets.
+
+* **prepare** is called before the RenderPass is executed (aka rendered). This is where the pass _declares_ and _references_ the resources it wants to use during execution.
+
+* **execute** is where all the important stuff occurs. This is the only step that rendering operations should be performed.
+
+* **reset** is called after execution is complete to reset anything the pass needs to reset. For our implementation, we will not need to use this method.
+
+* **cleanup** is called if/when the RenderPass is removed from the FrameGraph. We will not use this method either.
+
+== Adding Fields
+
+Our RenderPass takes one texture as input and produces one texture as output. We will need one ResourceTicket to represent each, so that is two tickets in total. ResourceTickets have a generic type that defines what type of resource the ticket is associated with. In our case both are handling Texture2Ds.
+
+----
+private ResourceTicket<Texture2D> input;
+private ResourceTicket<Texture2D> output;
+----
+
+Also, for each output we produce, we need a ResourceDef as well. Output resources only created when they are needed, so the RenderPass cannot directly create the resource itself. A ResourceDef is used to define exactly how the resource is created, and also how it behaves under certain conditions. Since the output is a Texture2D, we will use a TextureDef (which implements ResourceDef).
+
+----
+private final TextureDef<Texture2D> texDef = TextureDef.texture2D();
+----
+
+The static method `TextureDef.texture2D()` is extremely helpful for creating basic texture definitions, however, you don't need to use it if you don't want to. An alternate way to create the TextureDef is using a constructor.
+
+----
+private final TextureDef<Texture2D> texDef =
+        new TextureDef<>(Texture2D.class, img -> new Texture2D(img));
+----
+
+== Setting Things Up
+
+We have our ResourceTicket and ResourceDef fields, but you may have noticed we haven't assigned anything to the ResourceTicket fields! We will remedy that in the `initialize` method.
+
+----
+protected void initialize(FrameGraph frameGraph) {
+    input = addInput("Input");
+    output = addOutput("Output");
+}
+----
+
+The `addInput` creates a ResourceTicket with the given name (in this case "Input") and registers it in a local internal list along with other input tickets. The `addOutput` method does the same thing, except it registers the ticket in a different list with other output tickets. It is important to have these tickets registered, otherwise certain operations may not function correctly.
+
+Additionally, in the `initialize` method, we will set up the texture definition's minification and magnification filters as well. This will affect how the texture definition generates the output texture.
+
+----
+texDef.setMinFilter(Texture.MinFilter.BilinearNoMipMaps);
+texDef.setMagFilter(Texture.MagFilter.Bilinear);
+----
+
+== Preparing for Execution
+
+The preparation step is used by the FrameGraph's resource manager to help determine what resources should be used where, and if resources can be reused anywhere. During this step, the RenderPass is expected to define exactly what resources it intends on creating, and what resources it intends on using from other passes.
+
+----
+@Override
+protected void prepare(FGRenderContext context) {
+    declare(texDef, out);
+    reference(in);
+}
+----
+
+* The `declare` method tells the resource manager that it intends on producing, with the texture definition, the resource associated with the output ticket. This is solely used for output resources.
+
+* The `reference` method tells the resource manager that it intends on using a resource produced by another pass. The exact resource and exact pass is not important, just that our RenderPass will use an externally produced resource. This is solely used for input resources.
+
+It is extremely important to reference and declare the input and output resources. The resources you want to use will simply not be available.
+
+[NOTE]
+====
+`reference` should be used when the particular resource is *required* to exist. If the input ticket isn't connected to another ticket, or if the expected resource is undefined, an exception will be thrown. If you want the input to be _optional_, so that an exception won't be thrown in those cases, use `referenceOptional` instead.
+====
+
+Another method that is important to use for performance reasons during the preparation step is `reserve`.
+
+----
+reserve(out);
+----
+
+It is not critical that this be called, but it can significantly boost performance, especially if the FrameGraph layout changes at all. Reserve greatly increases the chances of getting the exact same resource as the output resource from frame to frame, which minimizes the number of times the output texture must be bound to a FrameBuffer. Just make sure that the `reserve` call is _after_ the `declare` call for the output ticket.
+
+== Executing the Pass
+
+This is typically where the majority of the action happens in every pass implementation. In our pass, we will need to do the following steps in order:
+
+. Acquire the input texture.
+. Set the output texture's width and height to half the input texture's width and height.
+. Get a FrameBuffer to use.
+. Acquire the output texture and attach it to the FrameBuffer.
+. Attach the FrameBuffer to the renderer.
+. Set the camera's width and height to the output texture's width and height.
+. Render!
+
+[NOTICE]
+====
+Doesn't something seem wrong here? Indeed, it may seem that we will be setting the width and height of the output texture before we even have the output texture! But that is only half true. We will actually be setting the width and height of the _texture definition_, which will then create the output texture for us with the width and height we gave it. This is a clever (and perfectly legal) trick to have output resources react to the states of input resources.
+====
+
+The first step is to acquire the input texture.
+
+----
+Texture2D inTex = resources.acquire(input);
+----
+
+This code is asking the resource manager to fetch the input resource. If the resource doesn't exist, or our input ResourceTicket isn't associated with any resource, an exception will be thrown. This is handy for inputs that require a resource in order for the pass to function, but if you want to have an optional input, use `acquireOrElse` instead.
+
+----
+Texture2D inTex = resources.acquireOrElse(input, null);
+if (inTex == null) {
+    System.out.println("input texture not defined");
+}
+----
+
+Next, we need to set the output texture's width and height through the texture definition.
+
+----
+int w = inTex.getImage().getWidth() / 2;
+int h = inTex.getImage().getHeight() / 2;
+texDef.setSize(w, h);
+----
+
+One extra step we can take if we want is to set the output texture's image format to be the same as the input texture's image format (through the texture definition, of course). This is entirely optional.
+
+----
+texDef.setFormat(inTex.getImage().getFormat());
+----
+
+Next we will need to create a FrameBuffer to render to. RenderPass has a nifty feature for handling FrameBuffers, so that we don't accidentally create FrameBuffers we don't actually need.
+
+----
+FrameBuffer fb = getFrameBuffer(w, h, 1);
+----
+
+The width and height parameters, remember, are exactly half the input texture's width and height, which matches the output texture's size. The last argument defines the number of samples, which we will leave at one.
+
+Next we need to finally acquire the output texture and attach it to the FrameBuffer as a color target. For that we will use a special method that does both called `acquireColorTarget`, which does all the hard work of minimizing the number of expensive texture binds that need to be performed.
+
+----
+resources.acquireColorTarget(fb, output);
+----
+
+At its core, `acquireColorTarget` is functionally the same the following code, but far more efficient.
+
+----
+// the slow way to get and attach the output texture
+fb.clearColorTargets();
+Texture2D outTex = resources.acquire(output);
+fb.addColorTarget(FrameBuffer.target(outTex));
+fb.setUpdateNeeded();
+----
+
+After that, we need to attach the FrameBuffer to the renderer so that the next render's results will be written to the FrameBuffer.
+
+----
+context.getRenderer().setFrameBuffer(fb);
+context.getRenderer().clearBuffers(true, true, true);
+----
+
+And also set the camera width and height to match the size of the output texture. This is important, otherwise the scaling will be off.
+
+----
+context.resizeCamera(w, h, false, false, false);
+----
+
+Finally, we perform the actual render using `renderTextures`, which renders the given color texture and depth texture on a fullscreen quad. For our purposes, we do not need specify the depth texture, so the quad will be rendered at a depth of one (instead of according to the depth texture).
+
+----
+context.renderTextures(inTex, null);
+----
+
+And that's it! We now have a fully functional downsampling render pass! Altogether, the DownsamplingPass looks like this:
+
+----
+public class DownsamplingPass extends RenderPass {
+    
+    private ResourceTicket<Texture2D> in;
+    private ResourceTicket<Texture2D> out;
+    private final TextureDef<Texture2D> texDef = TextureDef.texture2D();
+    
+    @Override
+    protected void initialize(FrameGraph frameGraph) {
+        in = addInput("Input");
+        out = addOutput("Output");
+        texDef.setMinFilter(Texture.MinFilter.NearestNoMipMaps);
+        texDef.setMagFilter(Texture.MagFilter.Nearest);
+    }
+    
+    @Override
+    protected void prepare(FGRenderContext context) {
+        declare(texDef, out);
+        reserve(out);
+        reference(in);
+    }
+    
+    @Override
+    protected void execute(FGRenderContext context) {
+        
+        Texture2D inTex = resources.acquire(in);
+        Image img = inTex.getImage();
+        
+        int w = img.getWidth() / 2;
+        int h = img.getHeight() / 2;
+        texDef.setSize(w, h);
+        
+        texDef.setFormat(img.getFormat());
+        
+        FrameBuffer fb = getFrameBuffer(w, h, 1);
+        resources.acquireColorTarget(fb, out);
+        context.getRenderer().setFrameBuffer(fb);
+        context.getRenderer().clearBuffers(true, true, true);
+        
+        context.resizeCamera(w, h, false, false, false);
+        context.renderTextures(inTex, null);
+        
+    }
+    
+    @Override
+    protected void reset(FGRenderContext context) {}
+    
+    @Override
+    protected void cleanup(FrameGraph frameGraph) {}
+    
+}
+----
+
+Surprisingly small, isn't it?
+
+But something seems off here. We set the FrameBuffer used for rendering, but we don't remove it. Wouldn't that cause problems with other RenderPasses? Actually, no. Each pass is expected to explicitely set the FrameBuffer it wants to render to, even the ones that want to render to the ViewPort's FrameBuffer. This is because each FrameBuffer switch can be expensive, and this protocol uses the fewest possible switches. So as long as you explicitely attach the FrameBuffer you want to render to, you will be fine.
+
+== Putting the Pass into Action
+
+Adding this pass to the FrameGraph is exactly like adding any other pass. Remember that when connecting this pass to other passes, the input is named "Input" and the output is named "Output". You can change the names if you want, but be aware that may break existing FrameGraphs you've built with this pass.
+
+As an example to get you started, you can add this pass between a GeometryPass and OutputPass like so:
+
+----
+GeometryPass geometry = fg.add(new GeometryPass());
+DonwsamplingPass downsample = fg.add(new DownsamplingPass());
+OutputPass out = fg.add(new OutputPass());
+
+downsample.makeInput(geometry, "Color", "Input");
+
+out.makeInput(downsample, "Output", "Color");
+out.makeInput(geometry, "Depth", "Depth");
+----
+
+== Extra Things to Know
+
+This simple RenderPass covers many functionalities of RenderPasses, but couldn't hope cover everything available.
+
+=== Saved Render Settings
+
+We never messed with any RenderManager settings in this tutorial, but if you poke around through other pass implementation, you may find that although they change a RenderManager setting, they don't change it back when they're done. This is because the FrameGraph has a mechanism that save RenderManager settings before any pass is executed, and automatically reapplies them after each RenderPass is executed. This ensures settings don't leak between render passes accidentally.
+
+The settings that the FrameGraph manages are:
+
+* Forced technique
+* Forced material
+* Geometry render handler
+* Geometry filter
+* Forced render state
+* Camera width and height
+* Renderer background
+
+Code with care when messing with other settings: you're on your own!
+
+=== Savable
+
+The entire FrameGraph is designed to be Savable, so it is considered best practice to also make your RenderPass Savable. RenderPass itself already implements Savable, so all you need to do is override `read` and `write` to read/write your pass's special properties.
+
+----
+@Override
+protected void write(OutputCapsule out) throws IOException {
+    ...
+}
+
+@Override
+protected void read(InputCapsule in) throws IOException {
+    ...
+}
+----
+
+== Exercises
+
+* Try removing the resizing of the camera. How does that change the output?
+
+* Try changing the ratio between the input texture's size and the output texture's size.
+
+* Try changing the min and mag filters of the output texture. (Hint: `NearestNoMipMaps` and `Nearest` produce a common video game effect)
+
+* Try plugging the output from one DownsamplingPass into another Downsampling pass.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

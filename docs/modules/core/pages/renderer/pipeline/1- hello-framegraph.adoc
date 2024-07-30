@@ -1,11 +1,12 @@
 = Hello FrameGraph
-:revnumber: 2.0
-:revdate: 2024/07/28
+:revnumber: 0.0
+:revdate: 2024/07/29
 :keywords: rendering, pipeline, framegraph, documentation
 
 
 By default, JME has uses a simple forward renderer, and while it can usually get by, it is not satisfactory for high-quality rendering because it is often too slow. FrameGraphs were introduced to give users chance to customize the rendering pipeline to best meet their application's needs with a practical modular interface.
 
+The whole FrameGraph system is massive and quite complicated. If you have any questions or problems, don't hesitate to ask on the https://hub.jmonkeyengine.org/[JMonkeyEngine Forum].
 
 == What exactly is a FrameGraph?
 
@@ -13,10 +14,10 @@ A FrameGraph is a customizable rendering pipeline consisting of a series of modu
 
 == Creating and Using a FrameGraph
 
-The first step to using a FrameGraph to render your application is to create one. You can either load one from a `.j3g` binary file, or create one yourself from scratch or from a factory method. For this tutorial, we will focus on loading from a binary.
+The first step to using a FrameGraph to render your application is to create one. You can either load one from a `.j3g` binary file, or create one yourself from scratch. For this tutorial, we will focus on loading from a binary.
 
 ----
-FrameGraph fg = assetManager.loadFrameGraph("Common/FrameGraphs/Deferred.j3g");
+FrameGraph fg = new FrameGraph(assetManager, "Common/FrameGraphs/Deferred.j3g");
 ----
 
 Now that the FrameGraph has been created, it must be added to a ViewPort it will render.

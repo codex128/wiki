@@ -1,0 +1,95 @@
+= FrameGraph from Scratch
+:revnumber: 0.0
+:revdate: 2024/07/29
+:keywords: rendering, pipeline, framegraph, documentation
+
+Although it is very easy to load an existing FrameGraph from a file, it is often useful, or necessary, to create one from scratch with code. The benefits are that the resulting FrameGraph will be precisely built for the application's needs.
+
+== The Render Passes
+
+Before we begin constructing the FrameGraph, we should get familiar with the building blocks. That is, the render passes. For this tutorial, we will construct a simple forward-style FrameGraph, so we will only need a few passes.
+
+* **SceneEnqueuePass:** puts all the geometries in the ViewPort's scenes into different GeometryQueues. By default, the available queues are "Opaque", "Sky", "Transparent", "Gui", and "Translucent" (5 in total). Others can be added if desired.
+
+* **QueueMergePass:** Merges several GeometryQueues into one while maintaining the order of the geometries. We have to specify the number of GeometryQueues we want to merge; in this case it is 5 (for each queue produced by SceneEnqueuePass).
+
+* **GeometryPass:** Renders a GeometryQueue to a color texture and a depth texture.
+
+* **OutputPass:** Renders a color texture and a depth texture to the screen for viewing.
+
+These four passes are perhaps the most commonly used passes, because they flexibly perform very important and common tasks for rendering. However, it is important to keep in mind that there is nothing special about these passes that makes their implementation impossible to replicate without changes to JMonkeyEngine's source code.
+
+== Adding the Passes
+
+Adding the passes is very simple. One thing to keep in mind is that the order the passes are added in matters, a lot. The order defines the order in which passes are executed. In this case, we want the SceneEnqueuePass executed first, followed by the QueueMergePass, and so on.
+
+----
+FrameGraph fg = new FrameGraph(assetManager);
+SceneEnqueuePass enqueue = fg.add(new SceneEnqueuePass(true, true));
+QueueMergePass merge = fg.add(new QueueMergePass(5));
+GeometryPass geometry = fg.add(new GeometryPass());
+OutputPass out = fg.add(new OutputPass());
+----
+
+== Connecting the Passes
+
+Although the passes themselves are added, they do not have the necessary information to run properly (with the exception of SceneEnqueuePass). We remedy this by connecting various _tickets_ belonging to the passes together, which will allow passes to access resources produced by other passes.
+
+Primarily, the `makeInput` method is used to connect two tickets together.
+
+----
+targetPass.makeInput(sourcePass, "SourceTicketName", "TargetTicketName");
+----
+
+Using this, we can define exactly how resources are shared.
+
+----
+// connect SceneEnqueuePass to QueueMergePass
+merge.makeInput(enqueue, "Opaque", "Queues[0]");
+merge.makeInput(enqueue, "Sky", "Queues[1]");
+merge.makeInput(enqueue, "Transparent", "Queues[2]");
+merge.makeInput(enqueue, "Gui", "Queues[3]");
+merge.makeInput(enqueue, "Translucent", "Queues[4]");
+
+// connect QueueMergePass to GeometryPass
+geometry.makeInput(merge, "Result", "Geometry");
+
+// connect GeometryPass to OutputPass
+out.makeInput(geometry, "Color", "Color");
+out.makeInput(geometry, "Depth", "Depth");
+----
+
+=== Breakdown
+
+. Connect the different GeometryQueues produced by SceneEnqueuePass to the QueueMergePass. QueueMergePass uses a set of tickets called a _ticket group_ that uses the same notation as Java arrays. In this case, the group name is "Queues" and the group size is 5 (corresponding to the constructor argument passed to QueueMergePass above). The ticket index that each GeometryQueue is connected to controls the order in which the queues are rendered. Ticket groups are covered in more detail in https://brokenlink/[this tutorial].
+
+. Connect the resulting merged GeometryQueue from SceneEnqueuePass to GeometryPass. This will make the GeometryPass render the queue produced by SceneEnqueuePass.
+
+. Connect the color and depth textures produced by GeometryPass to the OutputPass, so that the result can be seen by the user.
+
+This may be difficult to think about when it's just code. A handy way to think of this concept visually is to think of the FrameGraph as a set of shader nodes. Each pass is like a node, and each connection is like a wire.
+
+[IMPORTANT]
+====
+Do not connect tickets from a pass executed later to tickets from a pass executed earlier! This will result in an exception.
+====
+
+Now that the passes are correctly connected, the FrameGraph will render the scene. Remember to attach the FrameGraph to the ViewPort you want rendered!
+
+== Exercise
+
+Can you make the "Transparent" GeometryQueue render using a different GeometryPass than the other queues? Here are some hints:
+
+* Make a new GeometryPass and OutputPass and connect them.
+
+* Plug the "Transparent" queue into the new GeometryPass directly from the SceneEnqueuePass.
+
+
+
+
+
+
+
+
+
+

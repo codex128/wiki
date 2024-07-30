@@ -1,0 +1,108 @@
+= Extra FrameGraph Features
+:revnumber: 0.0
+:revdate: 2024/07/29
+:keywords: rendering, pipeline, framegraph, documentation
+
+When developing FrameGraphs, there are a handful of small features that can incredibly useful.
+
+== Saving
+
+Saving your FrameGraph to a file is sometimes handy to do. Maybe you'd like to edit the FrameGraph using a graphical tool, or maybe you'd like to share it with someone else. Whatever the reason, exporting to binary is incredibly easy to do.
+
+----
+FrameGraph fg = ...
+File destination = new File("path/to/save/at.j3g");
+try {
+    BinaryExporter.getInstance().save(fg.createData(), destination);
+} catch (IOException) {
+    // handle exception
+}
+----
+
+You can also use XML format, but it is recommended to use the binary exporter when saving FrameGraphs, and to use the `.j3g` file format. That will allow you - or others - to use the AssetManager without hassle when loading the FrameGraph again.
+
+== SavableObject
+
+SavableObject is a new addition to JMonkeyEngine that isn't directly related to the FrameGraph pipeline system. Given an object, any object, SavableObject will save it if its class is supported by the output and input capsules. You don't need to know the class to give it to SavableObject, that is handled automatically.
+
+----
+SavableObject object = new SavableObject(myUnidentiedObject);
+----
+
+This is incredibly useful for taking a crack at saving objects that may or may not be savable.
+
+== Settings Map and GraphSetting
+
+The settings map is a HashMap in the FrameGraph that stores objects by strings. The two great things about the settings map is that it is savable (using SavableObjects) and RenderPasses can access it (through GraphSources and GraphTargets) to either read or write data. It's an excellent medium between game logic and RenderPasses.
+
+----
+fg.setSetting("MySetting", 53);
+int mine = fg.getSetting("MySetting");
+System.out.println(mine); // 53
+----
+
+== GraphSetting
+
+GraphSetting is an implementation of both GraphSource and GraphTarget that is incredibly powerful. Instead of directly interfacing with game logic, GraphSetting interfaces with the settings map, allowing RenderPasses to read and write data from and to it.
+
+----
+GraphSetting<Integer> mySetting = new GraphSetting<>("MySetting", 12);
+----
+
+The first constructor argument obviously defines which setting to read from and write to. The second argument is the default value used if no value exists to read in the settings map.
+
+GraphSetting completes the last link in a medium between game logic and the FrameGraph that is completely automatic. It is probably the single most powerful and useful GraphSource/GraphTarget implementation available. Make sure to use it!
+
+== Primitive Resources
+
+Resource manager goes to great lengths to avoid creating resources whenever possible. However, sometimes it is better for a particular resource to simply not go through those lengths, because it is more efficient and less troublesome. This is done by setting a resource as primitive by directly registering the resource yourself, instead of allowing the system to create it for you.
+
+For example, suppose a RenderPass has an integer output counting the number of lights in a scene. It would be ridiculous to try to avoid creating extra integers, so setting the output resource as a primitive is much more logical. Also, primitive resources do not require a resource definition, which means even less hassle for just a single integer.
+
+The first step in creating a primitive resource is, when declaring the resource during preparation, to pass `null` as the resource definition argument.
+
+----
+declare(null, numLightsOutput);
+----
+
+Then, during execution, instead of using `acquire` to get the resource, use `setPrimitive` to directly set the integer.
+
+----
+int numberOfLights = ...
+resources.setPrimitive(numLightsOutput, numberOfLights);
+----
+
+[NOTE]
+====
+It is completely useless to try to reserve a primitive resource.
+====
+
+== Multithreading
+
+The FrameGraph has multithreading capability, which can boost the performance of some FrameGraphs. To add a pass to another thread, set the thread index higher than zero when adding the pass to the FrameGraph.
+
+----
+fg.add(new MyPass(), new PassIndex(1, -1));
+----
+
+This will add the hypothetical `MyPass` to the end of the queue (hence the -1) residing in the thread at index 1. The thread at index 0 is JMonkeyEngine's main rendering thread, and unless otherwise specified, all passes are added there by default.
+
+[IMPORTANT]
+====
+Do not add passes that perform rendering operations or mess with render settings in any other thread besides thread 0, because JMonkeyEngine's rendering interface is not threadsafe.
+====
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
